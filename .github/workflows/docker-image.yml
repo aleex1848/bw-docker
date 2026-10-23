@@ -1,32 +1,76 @@
-name: Push to Docker Hub
+name: bw-cli image
 
 on:
+  schedule:
+    - cron: "0 5 * * *"
   workflow_dispatch:
-    inputs:
-      version:
-        description: "bw version (just the numbers, e.g. 2023.7.0)"
-        required: true
-        type: string
+
+permissions:
+  contents: write
+  packages: write
+
+concurrency:
+  group: bw-cli-image
+  cancel-in-progress: false
 
 jobs:
-  build:
+  release:
     runs-on: ubuntu-latest
     steps:
-      - name: Bitwarden Secrets Manager GitHub Action
-        uses: bitwarden/sm-action@14f92f1d294ae3c2b6a3845d389cd2c318b0dfd8 # v2.2.0
-        with:
-          access_token: ${{ secrets.ACCESS_TOKEN }}
-          secrets: |
-            d8a56663-858c-4aac-b0a2-afcd00edf2f1 > DOCKER_USER
-            98fc7325-57d2-4910-b37c-afcd00ed81b7 > DOCKER_PASSWORD
-
-      - uses: actions/checkout@v3
-      - name: docker login
-        run: docker login -u $DOCKER_USER -p $DOCKER_PASSWORD
-      - name: docker build
+      - name: Neueste CLI-Version
+        id: ver
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          docker build . --file Dockerfile --tag $DOCKER_USER/bw-cli:latest \
-          --tag $DOCKER_USER/bw-cli:${{ github.event.inputs.version }} \
-          --tag $DOCKER_USER/bw-cli:v${{ github.event.inputs.version }}
-      - name: docker push
-        run: docker push -a $DOCKER_USER/bw-cli
+          set -euo pipefail
+          VER=$(curl -fsSL \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            "https://api.github.com/repos/bitwarden/clients/releases?per_page=40" \
+            | jq -r '[.[] | select(.draft == false and .prerelease == false and (.tag_name | test("^cli-v[0-9]")))] | sort_by(.published_at) | reverse | .[0].tag_name | sub("^cli-v"; "")')
+          if [[ -z "$VER" || "$VER" == "null" ]]; then
+            echo "Keine CLI-Version gefunden" >&2
+            exit 1
+          fi
+          echo "version=$VER" >> "$GITHUB_OUTPUT"
+          if gh release view "v$VER" >/dev/null 2>&1; then
+            echo "v$VER existiert bereits"
+            echo "build=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "v$VER ist neu"
+            echo "build=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@v4
+        if: steps.ver.outputs.build == 'true'
+
+      - name: Image bauen und nach ghcr.io schieben
+        if: steps.ver.outputs.build == 'true'
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          set -euo pipefail
+          echo "$GITHUB_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          IMAGE="ghcr.io/${GITHUB_REPOSITORY,,}"
+          docker build \
+            --build-arg "BW_VERSION=$VERSION" \
+            --tag "$IMAGE:$VERSION" \
+            --tag "$IMAGE:latest" \
+            .
+          docker push "$IMAGE:$VERSION"
+          docker push "$IMAGE:latest"
+
+      - name: GitHub Release
+        if: steps.ver.outputs.build == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          set -euo pipefail
+          IMAGE="ghcr.io/${GITHUB_REPOSITORY,,}"
+          gh release create "v$VERSION" \
+            --title "bw-cli $VERSION" \
+            --notes "$(printf '%s\n' \
+              "Image: \`$IMAGE:$VERSION\`" \
+              "" \
+              "Upstream: https://github.com/bitwarden/clients/releases/tag/cli-v$VERSION")"
