@@ -42,7 +42,19 @@ jobs:
           fi
 
       - uses: actions/checkout@v4
-        if: steps.ver.outputs.build == 'true'
+
+      - name: Keepalive
+        run: |
+          set -euo pipefail
+          age=$(( ( $(date +%s) - $(git log -1 --format=%ct) ) / 86400 ))
+          echo "letzter Commit: vor ${age} Tagen"
+          if [ "$age" -lt 45 ]; then
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit --allow-empty -m "chore: keepalive nach ${age} Tagen ohne Commit"
+          git push
 
       - name: Image bauen und nach ghcr.io schieben
         if: steps.ver.outputs.build == 'true'
