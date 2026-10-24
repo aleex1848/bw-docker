@@ -33,7 +33,7 @@ jobs:
             exit 1
           fi
           echo "version=$VER" >> "$GITHUB_OUTPUT"
-          if gh release view "v$VER" >/dev/null 2>&1; then
+          if gh release view "v$VER" --repo "$GITHUB_REPOSITORY" >/dev/null; then
             echo "v$VER existiert bereits"
             echo "build=false" >> "$GITHUB_OUTPUT"
           else
@@ -81,7 +81,7 @@ jobs:
         run: |
           set -euo pipefail
           IMAGE="ghcr.io/${GITHUB_REPOSITORY,,}"
-          gh release create "v$VERSION" \
+          gh release create "v$VERSION" --repo "$GITHUB_REPOSITORY" \
             --title "bw-cli $VERSION" \
             --notes "$(printf '%s\n' \
               "Image: \`$IMAGE:$VERSION\`" \
