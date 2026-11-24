@@ -41,7 +41,7 @@ jobs:
             echo "build=true" >> "$GITHUB_OUTPUT"
           fi
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Keepalive
         run: |
